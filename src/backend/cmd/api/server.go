@@ -77,16 +77,8 @@ func logLevel(s string) slog.Level {
 //go:embed meals.sqlite
 var embeddedDatabaseBytes []byte
 
-func hydrateDB(cfg config) error {
-	path, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(path)
-	dbPath := filepath.Join(dir, cfg.db.path)
-
-	_, err = os.Stat(dbPath)
+func hydrateDB(path string) error {
+	_, err := os.Stat(path)
 	if err == nil {
 		return nil
 	}
@@ -95,19 +87,20 @@ func hydrateDB(cfg config) error {
 		return err
 	}
 
-	return os.WriteFile(dbPath, embeddedDatabaseBytes, 0600)
+	return os.WriteFile(path, embeddedDatabaseBytes, 0600)
 }
 
 func openDB(cfg config) (*sql.DB, error) {
-	if err := hydrateDB(cfg); err != nil {
+	dbPath, err := filepath.Abs(cfg.db.path)
+	if err != nil {
 		return nil, err
 	}
 
-	// TODO: check if path is relative or absolute
-	// if relative and is an end node (file) with no
-	// preceding directory, maybase assume it's in
-	// the same directory as this executable
-	db, err := sql.Open("sqlite", cfg.db.path)
+	if err := hydrateDB(dbPath); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}

@@ -50,6 +50,7 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 }
 
 type mealForm struct {
+	ID            int64                 `form:"id"`
 	Name          string                `form:"name"`
 	AlternateName string                `form:"alternate_name"`
 	Category      string                `form:"category"`
@@ -63,6 +64,21 @@ type mealForm struct {
 	validator.Validator `form:"-"`
 }
 
+func mealToForm(meal data.Meal) mealForm {
+	return mealForm{
+		ID:            meal.ID,
+		Name:          meal.Name,
+		AlternateName: meal.AlternateName,
+		Category:      meal.Category,
+		Area:          meal.Area,
+		Country:       meal.Country,
+		Instructions:  meal.Instructions,
+		YoutubeURL:    meal.YoutubeURL,
+		SourceURL:     meal.SourceURL,
+		Ingredients:   meal.Ingredients,
+	}
+}
+
 func (f mealForm) Meal() data.Meal {
 	ingredients := make([]data.MealIngredient, len(f.Ingredients))
 
@@ -72,6 +88,7 @@ func (f mealForm) Meal() data.Meal {
 	}
 
 	return data.Meal{
+		ID:            f.ID,
 		Name:          f.Name,
 		AlternateName: f.AlternateName,
 		Category:      f.Category,
@@ -90,7 +107,7 @@ func (app *application) mealCreate(w http.ResponseWriter, r *http.Request) {
 	templateData := app.newTemplateData(r)
 	templateData.Form = form
 
-	app.render(w, r, http.StatusOK, "create.tmpl.html", templateData)
+	app.render(w, r, http.StatusOK, "meal.tmpl.html", templateData)
 }
 
 func (app *application) mealCreatePost(w http.ResponseWriter, r *http.Request) {
@@ -103,12 +120,11 @@ func (app *application) mealCreatePost(w http.ResponseWriter, r *http.Request) {
 
 	meal := form.Meal()
 
-	data.ValidateMeal(&form.Validator, meal)
-	if !form.Valid() {
+	if data.ValidateMeal(&form.Validator, meal); !form.Valid() {
 		templateData := app.newTemplateData(r)
 		templateData.Form = form
 
-		app.render(w, r, http.StatusUnprocessableEntity, "create.tmpl.html", templateData)
+		app.render(w, r, http.StatusUnprocessableEntity, "meal.tmpl.html", templateData)
 		return
 	}
 
@@ -140,26 +156,67 @@ func (app *application) mealView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	templateData := app.newTemplateData(r)
-	templateData.Meal = meal
+	templateData.Form = mealToForm(meal)
 
-	app.render(w, r, http.StatusOK, "view.tmpl.html", templateData)
+	app.render(w, r, http.StatusOK, "meal.tmpl.html", templateData)
 }
 
 func (app *application) mealUpdate(w http.ResponseWriter, r *http.Request) {
-	// TODO: Process meal form
-	// create meal return id as int to redirect to the /meal/view/{id}
-	if err := app.models.Meals.UpdateMeal(data.Meal{}); err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id < 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	var form mealForm
+
+	if err := app.decodePostForm(r, &form); err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	form.ID = int64(id)
+
+	meal := form.Meal()
+	if data.ValidateMeal(&form.Validator, meal); !form.Valid() {
+		templateData := app.newTemplateData(r)
+		templateData.Form = form
+
+		app.render(w, r, http.StatusUnprocessableEntity, "meal.tmpl.html", templateData)
+		return
+	}
+
+	if err := app.models.Meals.UpdateMeal(meal); err != nil {
+		if errors.Is(err, data.ErrNoMeal) {
+			http.NotFound(w, r)
+			return
+		}
+
 		app.serverError(w, r, err)
 		return
 	}
+
+	http.Redirect(w, r, fmt.Sprintf("/meal/view/%d", id), http.StatusSeeOther)
 }
 
 func (app *application) mealDelete(w http.ResponseWriter, r *http.Request) {
-	// TODO: process id
-	if err := app.models.Meals.DeleteMeal(0); err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id < 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := app.models.Meals.DeleteMeal(id); err != nil {
+		if errors.Is(err, data.ErrNoMeal) {
+			http.NotFound(w, r)
+			return
+		}
+
 		app.serverError(w, r, err)
 		return
 	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 type mealSearchForm struct {

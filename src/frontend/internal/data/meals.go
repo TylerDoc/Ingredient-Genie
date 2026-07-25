@@ -47,10 +47,51 @@ func NewMealsClient(logger *slog.Logger, addr string) MealsClient {
 	}
 
 	go func() {
-		// TODO: on timer verify health of API use logger for result
+		// TODO: this could bubble up to the website or something as well as logging.
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			if err := client.CheckHealth(); err != nil {
+				client.logger.Error("meals API health check failed", "error", err)
+			}
+		}
 	}()
 
 	return client
+}
+
+func (mc MealsClient) CheckHealth() error {
+	req, err := http.NewRequest(http.MethodGet, mc.addr+mc.healthcheckEndpoint, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Accept", "application/json")
+
+	resp, err := mc.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("meals API health check returned status %d", resp.StatusCode)
+	}
+
+	var Response struct {
+		Status string `json:"status"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&Response); err != nil {
+		return err
+	}
+
+	if Response.Status != "available" {
+		return fmt.Errorf("meals api failed health check with: %s", Response.Status)
+	}
+
+	return nil
 }
 
 func ValidateMeal(v *validator.Validator, meal Meal) {
@@ -160,12 +201,70 @@ func (mc MealsClient) GetMeal(id int) (Meal, error) {
 }
 
 func (mc MealsClient) UpdateMeal(meal Meal) error {
-	// TODO: send update request
+	body, err := json.Marshal(meal)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, mc.addr+mc.mealsUpdateEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := mc.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNoMeal
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update meal: unexpected status code %d", resp.StatusCode)
+	}
+
 	return nil
 }
 
 func (mc MealsClient) DeleteMeal(id int) error {
-	// TODO: send delete request
+	input := struct {
+		ID int `json:"id"`
+	}{
+		ID: id,
+	}
+
+	body, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, mc.addr+mc.mealsDeleteEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := mc.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNoMeal
+	}
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete meal: unexpected status code %d", resp.StatusCode)
+	}
+
 	return nil
 }
 

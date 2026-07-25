@@ -12,11 +12,14 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /static/", http.FileServerFS(ui.Files))
 
 	mux.HandleFunc("GET /{$}", app.home)
+
 	mux.HandleFunc("GET /meal/create", app.mealCreate)
 	mux.HandleFunc("POST /meal/create", app.mealCreatePost)
+
 	mux.HandleFunc("GET /meal/view/{id}", app.mealView)
-	mux.HandleFunc("PUT /meal/view/", app.mealUpdate)
-	mux.HandleFunc("DELETE /meal/view/", app.mealDelete)
+	mux.HandleFunc("POST /meal/view/{id}/update", app.mealUpdate)
+	mux.HandleFunc("POST /meal/view/{id}/delete", app.mealDelete)
+
 	mux.HandleFunc("GET /meal/search", app.searchMealsByIngredients)
 	mux.HandleFunc("POST /meal/search", app.searchMealsByIngredientsPost)
 

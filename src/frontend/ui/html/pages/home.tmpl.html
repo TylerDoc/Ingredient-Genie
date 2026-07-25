@@ -1,0 +1,58 @@
+{{define "title"}}Browse Meals{{end}}
+
+{{define "main"}}
+<section class="meal-browser">
+    <div class="browse-header">
+        <header class="page-header">
+            <h1>Browse Meals</h1>
+            <p>Explore recipes and find something new to cook.</p>
+        </header>
+        {{if .Meals}}
+            {{with .Metadata}}
+            <div class="pagination-container">
+                <nav class="pagination" aria-label="Meal pages">
+                    {{if gt .CurrentPage .FirstPage}}
+                        <a href="/?page={{previousPage .CurrentPage}}&pageSize={{.PageSize}}">
+                            Previous
+                        </a>
+                    {{end}}
+                    <span>
+                        Page {{.CurrentPage}} of {{.LastPage}}
+                    </span>
+                    {{if lt .CurrentPage .LastPage}}
+                        <a href="/?page={{nextPage .CurrentPage}}&pageSize={{.PageSize}}">
+                            Next
+                        </a>
+                    {{end}}
+                </nav>
+                <p class="result-count">
+                    {{.TotalRecords}} meals
+                </p>
+            </div>
+            {{end}}
+        {{end}}
+    </div>
+    {{if .Meals}}
+        <div class="meal-grid">
+            {{range .Meals}}
+                <article class="meal-card">
+                    <a href="/meal/view/{{.ID}}">
+                        <h2>{{.Name}}</h2>
+                    </a>
+                    <div class="meal-card-metadata">
+                        {{with .Category}}
+                            <span>{{.}}</span>
+                        {{end}}
+                        {{with .Area}}
+                            <span>{{.}}</span>
+                        {{end}}
+                    </div>
+                </article>
+            {{end}}
+        </div>
+    {{else}}
+        <p>No meals are available.</p>
+    {{end}}
+
+</section>
+{{end}}

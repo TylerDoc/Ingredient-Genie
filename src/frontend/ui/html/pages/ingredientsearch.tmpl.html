@@ -1,0 +1,109 @@
+{{define "title"}}Search Meals by Ingredients{{end}}
+
+{{define "scripts"}}
+<script src="/static/js/search.js" defer></script>
+{{end}}
+
+{{define "main"}}
+<section class="meal-search">
+    <header>
+        <h1>Search Meals by Ingredients</h1>
+        <p>Enter ingredients you have to find meals you can make.</p>
+    </header>
+    <form action="/meal/search" method="POST">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <fieldset>
+            <legend>Ingredients</legend>
+            {{with .Form.FieldErrors.ingredients}}
+                <div class="error">{{.}}</div>
+            {{end}}
+            <div id="ingredient-inputs">
+                {{if .Form.Ingredients}}
+                    {{range $i, $ingredient := .Form.Ingredients}}
+                        <div class="ingredient-input">
+                            <input
+                                type="text"
+                                id="ingredient-{{$i}}"
+                                name="ingredients"
+                                value="{{$ingredient}}"
+                                placeholder="e.g. Garlic">
+                        </div>
+                    {{end}}
+                {{else}}
+                    <div class="ingredient-input">
+                        <input
+                            type="text"
+                            id="ingredient-0"
+                            name="ingredients"
+                            placeholder="e.g. Garlic">
+                    </div>
+                {{end}}
+            </div>
+            <button type="button" id="add-ingredient">
+                + Add Ingredient
+            </button>
+        </fieldset>
+        <div class="search-options">
+            <div>
+                <label for="pagesize">Results per page</label>
+                <input
+                    type="text"
+                    id="pagesize"
+                    name="pagesize"
+                    placeholder="9">
+                {{with .Form.FieldErrors.pagesize}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+            </div>
+            <div>
+                <label for="sort">Sort by</label>
+                <select id="sort" name="sort">
+                    {{range .SortTypes}}
+                        <option
+                            value="{{.}}"
+                            {{if eq . $.Form.Sort}}selected{{end}}>
+                            {{.}}
+                        </option>
+                    {{end}}
+                </select>
+                {{with .Form.FieldErrors.sort}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+            </div>
+        </div>
+        <button type="submit">Search Meals</button>
+    </form>
+    {{if .MealMatches}}
+    <section class="search-results">
+        <h2>Search Results</h2>
+        <div class="meal-grid">
+            {{range .MealMatches}}
+            <article class="meal-card">
+                <h3>
+                    <a href="/meal/view/{{.Meal.ID}}">
+                        {{.Meal.Name}}
+                    </a>
+                </h3>
+                <p>
+                    {{.MatchedIngredientCount}} of
+                    {{.TotalIngredientCount}} ingredients matched
+                </p>
+                {{if .MissingIngredients}}
+                <div class="missing-ingredients">
+                    <strong>Missing:</strong>
+                    <ul>
+                        {{range .MissingIngredients}}
+                            <li>{{.}}</li>
+                        {{end}}
+                    </ul>
+                </div>
+                {{else}}
+                    <p>You have all the ingredients!</p>
+                {{end}}
+            </article>
+            {{end}}
+        </div>
+    </section>
+    {{end}}
+</section>
+{{end}}

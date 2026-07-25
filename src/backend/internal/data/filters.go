@@ -13,14 +13,15 @@ type Filters struct {
 func ValidateFilters(v *validator.Validator, f Filters) {
 	v.Check(f.Page > 0, "page", "must be greater than 0")
 	v.Check(f.Page <= 1_000, "page", "must be less than or equal to 1,000") // this may cause an unexpected issue if we surpass 1000 pages, unlikely..
-	v.Check(f.PageSize > 0, "page_size", "must be greater than 0")
-	v.Check(f.PageSize <= 10, "page_size", "must be less than or equal to 10")
+	v.Check(f.PageSize > 0, "pageSize", "must be greater than 0")
+	v.Check(f.PageSize <= 50, "pageSize", "must be less than or equal to 50")
 
-	_, validSort := mealSortStmts[f.Sort]
+	_, validSort := MealSortStmts[f.Sort]
 	v.Check(validSort, "sort", "invalid sort value")
 }
 
-var mealSortStmts = map[string]string{
+// TODO: should these be enums?? but it generates a lot of boilerplate..
+var MealSortStmts = map[string]string{
 	"id":     "MealId ASC",
 	"-id":    "MealId DESC",
 	"ratio":  "MatchRatio ASC, MealId ASC",
@@ -30,7 +31,7 @@ var mealSortStmts = map[string]string{
 }
 
 func (f Filters) orderBy() string {
-	expression, ok := mealSortStmts[f.Sort]
+	expression, ok := MealSortStmts[f.Sort]
 	if !ok {
 		panic("unsafe sort parameter: " + f.Sort)
 	}
@@ -47,26 +48,23 @@ func (f Filters) offset() int {
 }
 
 type Metadata struct {
-	CurrentPage  int `json:"current_page"`
-	PageSize     int `json:"page_size"`
-	FirstPage    int `json:"first_page"`
-	LastPage     int `json:"last_page"`
-	TotalRecords int `json:"total_records"`
+	CurrentPage  int `json:"currentPage"`
+	PageSize     int `json:"pageSize"`
+	FirstPage    int `json:"firstPage"`
+	LastPage     int `json:"lastPage"`
+	TotalRecords int `json:"totalRecords"`
 }
 
-func calculateMetadata(totalMatchingRecords, page, pageSize int) Metadata {
-	metadata := Metadata{
+func calculateMetadata(totalRecords, page, pageSize int) Metadata {
+	if totalRecords == 0 {
+		return Metadata{}
+	}
+
+	return Metadata{
 		CurrentPage:  page,
 		PageSize:     pageSize,
-		TotalRecords: totalMatchingRecords,
+		FirstPage:    1,
+		LastPage:     (totalRecords + pageSize - 1) / pageSize,
+		TotalRecords: totalRecords,
 	}
-
-	if totalMatchingRecords == 0 {
-		return metadata
-	}
-
-	metadata.FirstPage = 1
-	metadata.LastPage = (totalMatchingRecords + pageSize - 1) / pageSize
-
-	return metadata
 }

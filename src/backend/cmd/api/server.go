@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -71,8 +74,33 @@ func logLevel(s string) slog.Level {
 	return slog.LevelError
 }
 
+//go:embed meals.sqlite
+var embeddedDatabaseBytes []byte
+
+func hydrateDB(path string) error {
+	_, err := os.Stat(path)
+	if err == nil {
+		return nil
+	}
+
+	if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	return os.WriteFile(path, embeddedDatabaseBytes, 0600)
+}
+
 func openDB(cfg config) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", cfg.db.dsn)
+	dbPath, err := filepath.Abs(cfg.db.path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := hydrateDB(dbPath); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}

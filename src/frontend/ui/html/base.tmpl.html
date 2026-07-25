@@ -1,0 +1,33 @@
+{{define "base"}}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>{{template "title" .}} - Ingredient Genie</title>
+    
+    <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700">
+    <link rel="stylesheet" href="/static/css/main.css">
+
+    <script src="/static/js/main.js" defer></script>
+
+    {{block "scripts" .}}{{end}}
+</head>
+<body>
+    <header>
+        <div class="site-header">
+            <a class="site-logo" href="/">Ingredient Genie</a>
+            {{template "nav" .}}
+        </div>
+    </header>
+    <main>
+        {{template "main" .}}
+    </main>
+    <footer>
+        <p>&copy; Ingredient Genie</p>
+    </footer>
+</body>
+</html>
+{{end}}

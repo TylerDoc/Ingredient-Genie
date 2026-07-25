@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -19,6 +20,30 @@ type MealModel struct {
 	DB *sql.DB
 }
 
+func ValidateMeal(v *validator.Validator, meal Meal) {
+	v.Check(strings.TrimSpace(meal.Name) != "", "name", "must be provided")
+	v.Check(len(meal.Name) <= 200, "name", "must not be more than 200 characters")
+
+	v.Check(len(meal.Ingredients) > 0, "ingredients", "must contain at least one ingredient")
+
+	for i, ingredient := range meal.Ingredients {
+		v.Check(strings.TrimSpace(ingredient.Name) != "", "ingredients", "ingredient names must be provided")
+		v.Check(len(ingredient.Name) <= 200, "ingredients", "ingredient names must not be more than 200 characters")
+		v.Check(ingredient.Position == int64(i+1), "ingredients", "ingredient positions must be sequential")
+	}
+}
+
+func ValidateIngredientSearch(v *validator.Validator, ingredients []string) {
+	v.Check(len(ingredients) > 0, "ingredients", "must contain at least one ingredient")
+	v.Check(len(ingredients) <= 20, "ingredients", "must contain no more than 20 ingredients")
+
+	for _, ingredient := range ingredients {
+		ingredient = strings.TrimSpace(ingredient)
+		v.Check(ingredient != "", "ingredients", "must not contain empty values")
+		v.Check(len(ingredient) <= 100, "ingredients", "must not contain values longer than 100 characters")
+	}
+}
+
 type Meal struct {
 	ID            int64            `json:"id"`
 	Name          string           `json:"name"`
@@ -27,7 +52,6 @@ type Meal struct {
 	Area          string           `json:"area"`
 	Country       string           `json:"country"`
 	Instructions  string           `json:"instructions"`
-	ThumbnailURL  string           `json:"thumbnailUrl"`
 	YoutubeURL    string           `json:"youtubeUrl"`
 	SourceURL     string           `json:"sourceUrl"`
 	Ingredients   []MealIngredient `json:"ingredients"`
@@ -43,7 +67,6 @@ func (m Meal) ToSqlSafeMeal() SqlSafeMeal {
 	ssm.Area = StringToSqlNullString(m.Area)
 	ssm.Country = StringToSqlNullString(m.Country)
 	ssm.Instructions = StringToSqlNullString(m.Instructions)
-	ssm.ThumbnailURL = StringToSqlNullString(m.ThumbnailURL)
 	ssm.YoutubeURL = StringToSqlNullString(m.YoutubeURL)
 	ssm.SourceURL = StringToSqlNullString(m.SourceURL)
 
@@ -58,7 +81,6 @@ type SqlSafeMeal struct {
 	Area          sql.NullString `db:"Area"`
 	Country       sql.NullString `db:"Country"`
 	Instructions  sql.NullString `db:"Instructions"`
-	ThumbnailURL  sql.NullString `db:"ThumbnailUrl"`
 	YoutubeURL    sql.NullString `db:"YoutubeUrl"`
 	SourceURL     sql.NullString `db:"SourceUrl"`
 }
@@ -72,7 +94,6 @@ func (ssm SqlSafeMeal) ToMeal() Meal {
 		Area:          ssm.Area.String,
 		Country:       ssm.Country.String,
 		Instructions:  ssm.Instructions.String,
-		ThumbnailURL:  ssm.ThumbnailURL.String,
 		YoutubeURL:    ssm.YoutubeURL.String,
 		SourceURL:     ssm.SourceURL.String,
 		Ingredients:   make([]MealIngredient, 0),
@@ -163,6 +184,442 @@ func StringToSqlNullString(s string) sql.NullString {
 	}
 }
 
+func (m *MealModel) Create(ctx context.Context, meal Meal) (int64, error) {
+	// two queries, one to insert then meal, then it's ingredients
+	// with a transaction is easiest & safest.
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	sqlMeal := meal.ToSqlSafeMeal()
+
+	mealQuery := `
+		INSERT INTO Meal (
+			Name,
+			AlternateName,
+			Category,
+			Area,
+			Country,
+			Instructions,
+			YoutubeUrl,
+			SourceUrl
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := tx.ExecContext(
+		ctx,
+		mealQuery,
+		sqlMeal.Name,
+		sqlMeal.AlternateName,
+		sqlMeal.Category,
+		sqlMeal.Area,
+		sqlMeal.Country,
+		sqlMeal.Instructions,
+		sqlMeal.YoutubeURL,
+		sqlMeal.SourceURL,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	mealID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	ingredientQuery := `
+		INSERT OR IGNORE INTO Ingredient (
+			Name,
+			NormalizedName
+		)
+		VALUES (?, ?)
+	`
+
+	ingredientIDQuery := `
+		SELECT IngredientId
+		FROM Ingredient
+		WHERE NormalizedName = ?
+	`
+
+	mealIngredientQuery := `
+		INSERT INTO MealIngredient (
+			MealId,
+			IngredientId,
+			Position,
+			MeasureText
+		)
+		VALUES (?, ?, ?, ?)
+	`
+
+	for _, ingredient := range meal.Ingredients {
+		normalizedName := normalizeIngredientName(ingredient.Name)
+
+		_, err := tx.ExecContext(ctx, ingredientQuery, strings.TrimSpace(ingredient.Name), normalizedName)
+		if err != nil {
+			return 0, err
+		}
+
+		var ingredientID int64
+
+		if err = tx.QueryRowContext(ctx, ingredientIDQuery, normalizedName).Scan(&ingredientID); err != nil {
+			return 0, err
+		}
+
+		record := MealIngredientRecord{
+			MealID:       mealID,
+			IngredientID: ingredientID,
+			Position:     ingredient.Position,
+			MeasureText:  ingredient.MeasureText,
+		}.ToSqlSafeMealIngredientRecord()
+
+		_, err = tx.ExecContext(
+			ctx,
+			mealIngredientQuery,
+			record.MealID,
+			record.IngredientID,
+			record.Position,
+			record.MeasureText,
+		)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return mealID, nil
+}
+
+func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
+	var sqlMeal SqlSafeMeal
+
+	mealQuery := `
+		SELECT
+			MealId,
+			Name,
+			AlternateName,
+			Category,
+			Area,
+			Country,
+			Instructions,
+			YoutubeUrl,
+			SourceUrl
+		FROM Meal
+		WHERE MealId = ?`
+
+	err := m.DB.QueryRowContext(ctx, mealQuery, id).Scan(
+		&sqlMeal.ID,
+		&sqlMeal.Name,
+		&sqlMeal.AlternateName,
+		&sqlMeal.Category,
+		&sqlMeal.Area,
+		&sqlMeal.Country,
+		&sqlMeal.Instructions,
+		&sqlMeal.YoutubeURL,
+		&sqlMeal.SourceURL,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Meal{}, ErrRecordNotFound
+		}
+
+		return Meal{}, fmt.Errorf("get meal: %w", err)
+	}
+
+	meal := sqlMeal.ToMeal()
+
+	ingredientsQuery := `
+		SELECT
+			i.IngredientId,
+			i.Name,
+			i.NormalizedName,
+			mi.Position,
+			mi.MeasureText
+		FROM MealIngredient AS mi
+		INNER JOIN Ingredient AS i
+			ON i.IngredientId = mi.IngredientId
+		WHERE mi.MealId = ?
+		ORDER BY mi.Position`
+
+	rows, err := m.DB.QueryContext(ctx, ingredientsQuery, id)
+	if err != nil {
+		return Meal{}, fmt.Errorf("get meal ingredients: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ingredient MealIngredient
+		var name sql.NullString
+		var normalizedName sql.NullString
+		var measureText sql.NullString
+
+		err := rows.Scan(
+			&ingredient.IngredientID,
+			&name,
+			&normalizedName,
+			&ingredient.Position,
+			&measureText,
+		)
+		if err != nil {
+			return Meal{}, fmt.Errorf("scan meal ingredient: %w", err)
+		}
+
+		ingredient.Name = name.String
+		ingredient.NormalizedName = normalizedName.String
+		ingredient.MeasureText = measureText.String
+
+		meal.Ingredients = append(meal.Ingredients, ingredient)
+	}
+
+	if err := rows.Err(); err != nil {
+		return Meal{}, fmt.Errorf("iterate meal ingredients: %w", err)
+	}
+
+	return meal, nil
+}
+
+func (m *MealModel) Update(ctx context.Context, meal Meal) error {
+	// just liked with create we have some transacting to be done
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	sqlMeal := meal.ToSqlSafeMeal()
+
+	// update the meal itself.
+	query := `
+		UPDATE Meal
+		SET
+			Name = ?,
+			AlternateName = ?,
+			Category = ?,
+			Area = ?,
+			Country = ?,
+			Instructions = ?,
+			YoutubeUrl = ?,
+			SourceUrl = ?
+		WHERE MealId = ?
+	`
+
+	result, err := tx.ExecContext(
+		ctx,
+		query,
+		sqlMeal.Name,
+		sqlMeal.AlternateName,
+		sqlMeal.Category,
+		sqlMeal.Area,
+		sqlMeal.Country,
+		sqlMeal.Instructions,
+		sqlMeal.YoutubeURL,
+		sqlMeal.SourceURL,
+		meal.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating meal: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking updated meal: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrRecordNotFound
+	}
+
+	// replace the meal's ingredient associations.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM MealIngredient WHERE MealId = ?`, meal.ID); err != nil {
+		return fmt.Errorf("deleting existing meal ingredients: %w", err)
+	}
+
+	for _, ingredient := range meal.Ingredients {
+		normalizedName := normalizeIngredientName(ingredient.Name)
+
+		// add the ingredient if it doesn't already exist...
+		_, err = tx.ExecContext(
+			ctx,
+			`
+				INSERT OR IGNORE INTO Ingredient (
+					Name,
+					NormalizedName
+				)
+				VALUES (?, ?)
+			`,
+			ingredient.Name,
+			normalizedName,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting ingredient %q: %w", ingredient.Name, err)
+		}
+
+		// get id whether it's pre-existing or not
+		var ingredientID int64
+
+		err = tx.QueryRowContext(
+			ctx,
+			`
+				SELECT IngredientId
+				FROM Ingredient
+				WHERE NormalizedName = ?
+			`,
+			normalizedName,
+		).Scan(&ingredientID)
+		if err != nil {
+			return fmt.Errorf("getting ingredient %q: %w", ingredient.Name, err)
+		}
+
+		// recreate the relationship with this meal.
+		_, err = tx.ExecContext(
+			ctx,
+			`
+				INSERT INTO MealIngredient (
+					MealId,
+					IngredientId,
+					Position,
+					MeasureText
+				)
+				VALUES (?, ?, ?, ?)
+			`,
+			meal.ID,
+			ingredientID,
+			ingredient.Position,
+			StringToSqlNullString(ingredient.MeasureText),
+		)
+		if err != nil {
+			return fmt.Errorf("inserting meal ingredient %q: %w", ingredient.Name, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing meal update: %w", err)
+	}
+
+	return nil
+}
+
+func (m *MealModel) Delete(ctx context.Context, id int64) error {
+	// transaction
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// remove associations first because MealIngredient references Meal.
+	_, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM MealIngredient WHERE MealId = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("deleting meal ingredients: %w", err)
+	}
+
+	result, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM Meal WHERE MealId = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("deleting meal: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking deleted meal: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrRecordNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing meal delete: %w", err)
+	}
+
+	return nil
+}
+
+func (m *MealModel) GetAll(ctx context.Context, filters Filters) ([]Meal, Metadata, error) {
+	var totalRecords int
+
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM %s`,
+		MealsTable,
+	)
+
+	err := m.DB.QueryRowContext(ctx, countQuery).Scan(&totalRecords)
+	if err != nil {
+		return nil, Metadata{}, fmt.Errorf("count meals: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			MealId,
+			Name,
+			AlternateName,
+			Category,
+			Area,
+			Country,
+			Instructions,
+			YoutubeUrl,
+			SourceUrl
+		FROM %s
+		ORDER BY %s
+		LIMIT ? OFFSET ?`,
+		MealsTable,
+		filters.orderBy(),
+	)
+
+	rows, err := m.DB.QueryContext(
+		ctx,
+		query,
+		filters.limit(),
+		filters.offset(),
+	)
+	if err != nil {
+		return nil, Metadata{}, fmt.Errorf("get meals: %w", err)
+	}
+	defer rows.Close()
+
+	meals := make([]Meal, 0, filters.PageSize)
+
+	for rows.Next() {
+		var sqlMeal SqlSafeMeal
+
+		err := rows.Scan(
+			&sqlMeal.ID,
+			&sqlMeal.Name,
+			&sqlMeal.AlternateName,
+			&sqlMeal.Category,
+			&sqlMeal.Area,
+			&sqlMeal.Country,
+			&sqlMeal.Instructions,
+			&sqlMeal.YoutubeURL,
+			&sqlMeal.SourceURL,
+		)
+		if err != nil {
+			return nil, Metadata{}, fmt.Errorf("scan meal: %w", err)
+		}
+
+		meals = append(meals, sqlMeal.ToMeal())
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, Metadata{}, fmt.Errorf("iterate meals: %w", err)
+	}
+
+	return meals, calculateMetadata(totalRecords, filters.Page, filters.PageSize), nil
+}
+
 type MealMatch struct {
 	Meal                   Meal     `json:"meal"`
 	MissingIngredients     []string `json:"missingIngredients"`
@@ -172,8 +629,11 @@ type MealMatch struct {
 }
 
 func normalizeIngredientName(name string) string {
-	normalized := strings.Join(strings.Fields(name), " ")
-	return strings.ToLower(normalized)
+	name = strings.TrimSpace(name)
+	name = strings.ToLower(name)
+	name = strings.Join(strings.Fields(name), " ")
+
+	return name
 }
 
 func normalizeIngredientNames(ingredients []string) []string {
@@ -195,17 +655,6 @@ func normalizeIngredientNames(ingredients []string) []string {
 	}
 
 	return normalized
-}
-
-func ValidateIngredientSearch(v *validator.Validator, ingredients []string) {
-	v.Check(len(ingredients) > 0, "ingredients", "must contain at least one ingredient")
-	v.Check(len(ingredients) <= 20, "ingredients", "must contain no more than 20 ingredients")
-
-	for _, ingredient := range ingredients {
-		ingredient = strings.TrimSpace(ingredient)
-		v.Check(ingredient != "", "ingredients", "must not contain empty values")
-		v.Check(len(ingredient) <= 100, "ingredients", "must not contain values longer than 100 characters")
-	}
 }
 
 func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string, filters Filters) ([]MealMatch, Metadata, error) {
@@ -245,7 +694,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 				m.Area,
 				m.Country,
 				m.Instructions,
-				m.ThumbnailUrl,
 				m.YoutubeUrl,
 				m.SourceUrl,
 
@@ -275,7 +723,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 				m.Area,
 				m.Country,
 				m.Instructions,
-				m.ThumbnailUrl,
 				m.YoutubeUrl,
 				m.SourceUrl
 		)
@@ -287,7 +734,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 			Area,
 			Country,
 			Instructions,
-			ThumbnailUrl,
 			YoutubeUrl,
 			SourceUrl,
 			MatchedIngredientCount,
@@ -329,7 +775,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 			&sqlMeal.Area,
 			&sqlMeal.Country,
 			&sqlMeal.Instructions,
-			&sqlMeal.ThumbnailURL,
 			&sqlMeal.YoutubeURL,
 			&sqlMeal.SourceURL,
 			&match.MatchedIngredientCount,

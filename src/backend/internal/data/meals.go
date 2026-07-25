@@ -325,7 +325,7 @@ func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Meal{}, fmt.Errorf("record not found")
+			return Meal{}, ErrRecordNotFound
 		}
 
 		return Meal{}, fmt.Errorf("get meal: %w", err)
@@ -384,12 +384,166 @@ func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
 }
 
 func (m *MealModel) Update(ctx context.Context, meal Meal) error {
-	// TODO: actually update the meal
+	// just liked with create we have some transacting to be done
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	sqlMeal := meal.ToSqlSafeMeal()
+
+	// update the meal itself.
+	query := `
+		UPDATE Meal
+		SET
+			Name = ?,
+			AlternateName = ?,
+			Category = ?,
+			Area = ?,
+			Country = ?,
+			Instructions = ?,
+			YoutubeUrl = ?,
+			SourceUrl = ?
+		WHERE MealId = ?
+	`
+
+	result, err := tx.ExecContext(
+		ctx,
+		query,
+		sqlMeal.Name,
+		sqlMeal.AlternateName,
+		sqlMeal.Category,
+		sqlMeal.Area,
+		sqlMeal.Country,
+		sqlMeal.Instructions,
+		sqlMeal.YoutubeURL,
+		sqlMeal.SourceURL,
+		meal.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating meal: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking updated meal: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrRecordNotFound
+	}
+
+	// replace the meal's ingredient associations.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM MealIngredient WHERE MealId = ?`, meal.ID); err != nil {
+		return fmt.Errorf("deleting existing meal ingredients: %w", err)
+	}
+
+	for _, ingredient := range meal.Ingredients {
+		normalizedName := normalizeIngredientName(ingredient.Name)
+
+		// add the ingredient if it doesn't already exist...
+		_, err = tx.ExecContext(
+			ctx,
+			`
+				INSERT OR IGNORE INTO Ingredient (
+					Name,
+					NormalizedName
+				)
+				VALUES (?, ?)
+			`,
+			ingredient.Name,
+			normalizedName,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting ingredient %q: %w", ingredient.Name, err)
+		}
+
+		// get id whether it's pre-existing or not
+		var ingredientID int64
+
+		err = tx.QueryRowContext(
+			ctx,
+			`
+				SELECT IngredientId
+				FROM Ingredient
+				WHERE NormalizedName = ?
+			`,
+			normalizedName,
+		).Scan(&ingredientID)
+		if err != nil {
+			return fmt.Errorf("getting ingredient %q: %w", ingredient.Name, err)
+		}
+
+		// recreate the relationship with this meal.
+		_, err = tx.ExecContext(
+			ctx,
+			`
+				INSERT INTO MealIngredient (
+					MealId,
+					IngredientId,
+					Position,
+					MeasureText
+				)
+				VALUES (?, ?, ?, ?)
+			`,
+			meal.ID,
+			ingredientID,
+			ingredient.Position,
+			StringToSqlNullString(ingredient.MeasureText),
+		)
+		if err != nil {
+			return fmt.Errorf("inserting meal ingredient %q: %w", ingredient.Name, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing meal update: %w", err)
+	}
+
 	return nil
 }
 
 func (m *MealModel) Delete(ctx context.Context, id int64) error {
-	// TODO: delete it
+	// transaction
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// remove associations first because MealIngredient references Meal.
+	_, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM MealIngredient WHERE MealId = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("deleting meal ingredients: %w", err)
+	}
+
+	result, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM Meal WHERE MealId = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("deleting meal: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking deleted meal: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrRecordNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing meal delete: %w", err)
+	}
+
 	return nil
 }
 

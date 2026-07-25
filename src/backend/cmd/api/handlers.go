@@ -88,27 +88,43 @@ func (app *application) getMealHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) updateMealHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO
 	var meal data.Meal
+
 	if err := app.readJSON(w, r, &meal); err != nil {
 		app.badRequestResponse(w, r, err)
 		return
 	}
 
 	v := validator.New()
-	v.Check(meal.ID > 0, "id", "must be greater than 0")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	v.Check(meal.ID > 0, "id", "must be greater than 0")
+	data.ValidateMeal(v, meal)
+
+	if !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := app.models.Meals.Update(ctx, meal); err != nil {
-		app.serverErrorResponse(w, r, err)
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
 		return
+	}
+
+	err := app.writeJSON(w, http.StatusOK, envelope{"meal": meal}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
 	}
 }
 
 func (app *application) deleteMealHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO
 	var input struct {
 		ID int64 `json:"id"`
 	}
@@ -119,15 +135,25 @@ func (app *application) deleteMealHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	v := validator.New()
-	v.Check(input.ID > 0, "id", "must be greater than 0")
+	if v.Check(input.ID > 0, "id", "must be greater than 0"); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := app.models.Meals.Delete(ctx, input.ID); err != nil {
-		app.serverErrorResponse(w, r, err)
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
 		return
 	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (app *application) mealSortTypesHandler(w http.ResponseWriter, r *http.Request) {

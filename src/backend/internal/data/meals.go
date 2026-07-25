@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/michaelgov-ctrl/Ingredient-Genie-backend/internal/validator"
 )
 
 const (
@@ -18,6 +20,30 @@ type MealModel struct {
 	DB *sql.DB
 }
 
+func ValidateMeal(v *validator.Validator, meal Meal) {
+	v.Check(strings.TrimSpace(meal.Name) != "", "name", "must be provided")
+	v.Check(len(meal.Name) <= 200, "name", "must not be more than 200 characters")
+
+	v.Check(len(meal.Ingredients) > 0, "ingredients", "must contain at least one ingredient")
+
+	for i, ingredient := range meal.Ingredients {
+		v.Check(strings.TrimSpace(ingredient.Name) != "", "ingredients", "ingredient names must be provided")
+		v.Check(len(ingredient.Name) <= 200, "ingredients", "ingredient names must not be more than 200 characters")
+		v.Check(ingredient.Position == int64(i+1), "ingredients", "ingredient positions must be sequential")
+	}
+}
+
+func ValidateIngredientSearch(v *validator.Validator, ingredients []string) {
+	v.Check(len(ingredients) > 0, "ingredients", "must contain at least one ingredient")
+	v.Check(len(ingredients) <= 20, "ingredients", "must contain no more than 20 ingredients")
+
+	for _, ingredient := range ingredients {
+		ingredient = strings.TrimSpace(ingredient)
+		v.Check(ingredient != "", "ingredients", "must not contain empty values")
+		v.Check(len(ingredient) <= 100, "ingredients", "must not contain values longer than 100 characters")
+	}
+}
+
 type Meal struct {
 	ID            int64            `json:"id"`
 	Name          string           `json:"name"`
@@ -26,7 +52,6 @@ type Meal struct {
 	Area          string           `json:"area"`
 	Country       string           `json:"country"`
 	Instructions  string           `json:"instructions"`
-	ThumbnailURL  string           `json:"thumbnailUrl"`
 	YoutubeURL    string           `json:"youtubeUrl"`
 	SourceURL     string           `json:"sourceUrl"`
 	Ingredients   []MealIngredient `json:"ingredients"`
@@ -42,7 +67,6 @@ func (m Meal) ToSqlSafeMeal() SqlSafeMeal {
 	ssm.Area = StringToSqlNullString(m.Area)
 	ssm.Country = StringToSqlNullString(m.Country)
 	ssm.Instructions = StringToSqlNullString(m.Instructions)
-	ssm.ThumbnailURL = StringToSqlNullString(m.ThumbnailURL)
 	ssm.YoutubeURL = StringToSqlNullString(m.YoutubeURL)
 	ssm.SourceURL = StringToSqlNullString(m.SourceURL)
 
@@ -57,7 +81,6 @@ type SqlSafeMeal struct {
 	Area          sql.NullString `db:"Area"`
 	Country       sql.NullString `db:"Country"`
 	Instructions  sql.NullString `db:"Instructions"`
-	ThumbnailURL  sql.NullString `db:"ThumbnailUrl"`
 	YoutubeURL    sql.NullString `db:"YoutubeUrl"`
 	SourceURL     sql.NullString `db:"SourceUrl"`
 }
@@ -71,7 +94,6 @@ func (ssm SqlSafeMeal) ToMeal() Meal {
 		Area:          ssm.Area.String,
 		Country:       ssm.Country.String,
 		Instructions:  ssm.Instructions.String,
-		ThumbnailURL:  ssm.ThumbnailURL.String,
 		YoutubeURL:    ssm.YoutubeURL.String,
 		SourceURL:     ssm.SourceURL.String,
 		Ingredients:   make([]MealIngredient, 0),
@@ -163,8 +185,114 @@ func StringToSqlNullString(s string) sql.NullString {
 }
 
 func (m *MealModel) Create(ctx context.Context, meal Meal) (int64, error) {
-	// TODO (int64, error) int64 is the id of the created meal
-	return 0, nil
+	// two queries, one to insert then meal, then it's ingredients
+	// with a transaction is easiest & safest.
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	sqlMeal := meal.ToSqlSafeMeal()
+
+	mealQuery := `
+		INSERT INTO Meal (
+			Name,
+			AlternateName,
+			Category,
+			Area,
+			Country,
+			Instructions,
+			YoutubeUrl,
+			SourceUrl
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := tx.ExecContext(
+		ctx,
+		mealQuery,
+		sqlMeal.Name,
+		sqlMeal.AlternateName,
+		sqlMeal.Category,
+		sqlMeal.Area,
+		sqlMeal.Country,
+		sqlMeal.Instructions,
+		sqlMeal.YoutubeURL,
+		sqlMeal.SourceURL,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	mealID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	ingredientQuery := `
+		INSERT OR IGNORE INTO Ingredient (
+			Name,
+			NormalizedName
+		)
+		VALUES (?, ?)
+	`
+
+	ingredientIDQuery := `
+		SELECT IngredientId
+		FROM Ingredient
+		WHERE NormalizedName = ?
+	`
+
+	mealIngredientQuery := `
+		INSERT INTO MealIngredient (
+			MealId,
+			IngredientId,
+			Position,
+			MeasureText
+		)
+		VALUES (?, ?, ?, ?)
+	`
+
+	for _, ingredient := range meal.Ingredients {
+		normalizedName := normalizeIngredientName(ingredient.Name)
+
+		_, err := tx.ExecContext(ctx, ingredientQuery, strings.TrimSpace(ingredient.Name), normalizedName)
+		if err != nil {
+			return 0, err
+		}
+
+		var ingredientID int64
+
+		if err = tx.QueryRowContext(ctx, ingredientIDQuery, normalizedName).Scan(&ingredientID); err != nil {
+			return 0, err
+		}
+
+		record := MealIngredientRecord{
+			MealID:       mealID,
+			IngredientID: ingredientID,
+			Position:     ingredient.Position,
+			MeasureText:  ingredient.MeasureText,
+		}.ToSqlSafeMealIngredientRecord()
+
+		_, err = tx.ExecContext(
+			ctx,
+			mealIngredientQuery,
+			record.MealID,
+			record.IngredientID,
+			record.Position,
+			record.MeasureText,
+		)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return mealID, nil
 }
 
 func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
@@ -179,7 +307,6 @@ func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
 			Area,
 			Country,
 			Instructions,
-			ThumbnailUrl,
 			YoutubeUrl,
 			SourceUrl
 		FROM Meal
@@ -193,7 +320,6 @@ func (m *MealModel) Get(ctx context.Context, id int64) (Meal, error) {
 		&sqlMeal.Area,
 		&sqlMeal.Country,
 		&sqlMeal.Instructions,
-		&sqlMeal.ThumbnailURL,
 		&sqlMeal.YoutubeURL,
 		&sqlMeal.SourceURL,
 	)
@@ -290,7 +416,6 @@ func (m *MealModel) GetAll(ctx context.Context, filters Filters) ([]Meal, Metada
 			Area,
 			Country,
 			Instructions,
-			ThumbnailUrl,
 			YoutubeUrl,
 			SourceUrl
 		FROM %s
@@ -324,7 +449,6 @@ func (m *MealModel) GetAll(ctx context.Context, filters Filters) ([]Meal, Metada
 			&sqlMeal.Area,
 			&sqlMeal.Country,
 			&sqlMeal.Instructions,
-			&sqlMeal.ThumbnailURL,
 			&sqlMeal.YoutubeURL,
 			&sqlMeal.SourceURL,
 		)
@@ -351,8 +475,11 @@ type MealMatch struct {
 }
 
 func normalizeIngredientName(name string) string {
-	normalized := strings.Join(strings.Fields(name), " ")
-	return strings.ToLower(normalized)
+	name = strings.TrimSpace(name)
+	name = strings.ToLower(name)
+	name = strings.Join(strings.Fields(name), " ")
+
+	return name
 }
 
 func normalizeIngredientNames(ingredients []string) []string {
@@ -413,7 +540,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 				m.Area,
 				m.Country,
 				m.Instructions,
-				m.ThumbnailUrl,
 				m.YoutubeUrl,
 				m.SourceUrl,
 
@@ -443,7 +569,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 				m.Area,
 				m.Country,
 				m.Instructions,
-				m.ThumbnailUrl,
 				m.YoutubeUrl,
 				m.SourceUrl
 		)
@@ -455,7 +580,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 			Area,
 			Country,
 			Instructions,
-			ThumbnailUrl,
 			YoutubeUrl,
 			SourceUrl,
 			MatchedIngredientCount,
@@ -497,7 +621,6 @@ func (m *MealModel) FindByIngredients(ctx context.Context, ingredients []string,
 			&sqlMeal.Area,
 			&sqlMeal.Country,
 			&sqlMeal.Instructions,
-			&sqlMeal.ThumbnailURL,
 			&sqlMeal.YoutubeURL,
 			&sqlMeal.SourceURL,
 			&match.MatchedIngredientCount,

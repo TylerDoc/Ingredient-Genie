@@ -40,14 +40,13 @@ type Meal struct {
 	Area          string           `json:"area"`
 	Country       string           `json:"country"`
 	Instructions  string           `json:"instructions"`
-	ThumbnailURL  string           `json:"thumbnailUrl"`
 	YoutubeURL    string           `json:"youtubeUrl"`
 	SourceURL     string           `json:"sourceUrl"`
 	Ingredients   []MealIngredient `json:"ingredients"`
 }
 
 type MealIngredient struct {
-	IngredientID int64  `json:"ingredientId"`
+	IngredientID int64  `json:"ingredientId,omitempty"`
 	Name         string `json:"name"`
 	Position     int64  `json:"position"`
 	MeasureText  string `json:"measureText"`

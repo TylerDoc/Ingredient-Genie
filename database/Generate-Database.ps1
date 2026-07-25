@@ -88,7 +88,7 @@ $meals = 'a'..'z' | ForEach-Object {
 $normalizedMeals = foreach ($meal in $meals) {
     $ingredients = for ($i = 1; $i -le 20; $i++) {
         $ingredientProperty = "strIngredient$i"
-        $measureProperty    = "strMeasure$i"
+        $measureProperty = "strMeasure$i"
 
         $ingredientName = ConvertTo-TrimmedOrNull -Value $meal.$ingredientProperty
 
@@ -114,14 +114,17 @@ $normalizedMeals = foreach ($meal in $meals) {
         Area           = ConvertTo-TrimmedOrNull -Value $meal.strArea
         Country        = ConvertTo-TrimmedOrNull -Value $meal.strCountry
         Instructions   = ConvertTo-TrimmedOrNull -Value $meal.strInstructions
-        ThumbnailUrl   = ConvertTo-TrimmedOrNull -Value $meal.strMealThumb
         YoutubeUrl     = ConvertTo-TrimmedOrNull -Value $meal.strYoutube
         SourceUrl      = ConvertTo-TrimmedOrNull -Value $meal.strSource
         Ingredients    = @($ingredients)
     }
 }
 
-$databasePath = Join-Path $PSScriptRoot "meals.sqlite"
+$databasePath = 'meals.sqlite'
+
+if (Test-Path $databasePath) {
+    Remove-Item $databasePath -Force
+}
 
 $connection = New-SQLiteConnection -DataSource $databasePath
 $transaction = $null
@@ -131,30 +134,29 @@ try {
     $schema = @'
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS Meal (
+CREATE TABLE Meal (
     MealId          INTEGER PRIMARY KEY,
-    ExternalMealId  TEXT NOT NULL UNIQUE,
+    ExternalMealId  TEXT UNIQUE,
     Name            TEXT NOT NULL,
     AlternateName   TEXT,
     Category        TEXT,
     Area            TEXT,
     Country         TEXT,
     Instructions    TEXT,
-    ThumbnailUrl    TEXT,
     YoutubeUrl      TEXT,
     SourceUrl       TEXT
 );
 
-CREATE TABLE IF NOT EXISTS Ingredient (
+CREATE TABLE Ingredient (
     IngredientId    INTEGER PRIMARY KEY,
     Name            TEXT NOT NULL,
     NormalizedName  TEXT NOT NULL COLLATE NOCASE UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS MealIngredient (
+CREATE TABLE MealIngredient (
     MealId          INTEGER NOT NULL,
     IngredientId    INTEGER NOT NULL,
-    Position        INTEGER NOT NULL CHECK (Position BETWEEN 1 AND 20),
+    Position        INTEGER NOT NULL CHECK (Position >= 1),
     MeasureText     TEXT,
 
     PRIMARY KEY (MealId, Position),
@@ -167,35 +169,22 @@ CREATE TABLE IF NOT EXISTS MealIngredient (
         REFERENCES Ingredient (IngredientId)
 );
 
-CREATE INDEX IF NOT EXISTS IX_MealIngredient_IngredientId
+CREATE INDEX IX_MealIngredient_IngredientId
     ON MealIngredient (IngredientId);
 '@
 
     $schemaQueryParams = @{
         SQLiteConnection = $connection
         Query            = $schema
-        ErrorAction      = "Stop"
+        ErrorAction      = 'Stop'
     }
 
     Invoke-SqliteQuery @schemaQueryParams
 
     $transaction = $connection.BeginTransaction()
 
-    $mealParameterTypes = @{
-        ExternalMealId = [System.Data.DbType]::String
-        Name           = [System.Data.DbType]::String
-        AlternateName  = [System.Data.DbType]::String
-        Category       = [System.Data.DbType]::String
-        Area           = [System.Data.DbType]::String
-        Country        = [System.Data.DbType]::String
-        Instructions   = [System.Data.DbType]::String
-        ThumbnailUrl   = [System.Data.DbType]::String
-        YoutubeUrl     = [System.Data.DbType]::String
-        SourceUrl      = [System.Data.DbType]::String
-    }
-
     $insertMealSql = @'
-INSERT OR IGNORE INTO Meal (
+INSERT INTO Meal (
     ExternalMealId,
     Name,
     AlternateName,
@@ -203,7 +192,6 @@ INSERT OR IGNORE INTO Meal (
     Area,
     Country,
     Instructions,
-    ThumbnailUrl,
     YoutubeUrl,
     SourceUrl
 )
@@ -215,46 +203,30 @@ VALUES (
     @Area,
     @Country,
     @Instructions,
-    @ThumbnailUrl,
     @YoutubeUrl,
     @SourceUrl
 );
 '@
 
     $insertMealCommandParams = @{
-        Connection     = $connection
-        Transaction    = $transaction
-        CommandText    = $insertMealSql
-        ParameterTypes = $mealParameterTypes
+        Connection  = $connection
+        Transaction = $transaction
+        CommandText = $insertMealSql
+        ParameterTypes = @{
+            ExternalMealId = [System.Data.DbType]::String
+            Name           = [System.Data.DbType]::String
+            AlternateName  = [System.Data.DbType]::String
+            Category       = [System.Data.DbType]::String
+            Area           = [System.Data.DbType]::String
+            Country        = [System.Data.DbType]::String
+            Instructions   = [System.Data.DbType]::String
+            YoutubeUrl     = [System.Data.DbType]::String
+            SourceUrl      = [System.Data.DbType]::String
+        }
     }
 
     $insertMealCommand = New-PreparedSQLiteCommand @insertMealCommandParams
     $commands += $insertMealCommand
-
-    $updateMealSql = @'
-UPDATE Meal
-SET
-    Name          = @Name,
-    AlternateName = @AlternateName,
-    Category      = @Category,
-    Area          = @Area,
-    Country       = @Country,
-    Instructions  = @Instructions,
-    ThumbnailUrl  = @ThumbnailUrl,
-    YoutubeUrl    = @YoutubeUrl,
-    SourceUrl     = @SourceUrl
-WHERE ExternalMealId = @ExternalMealId;
-'@
-
-    $updateMealCommandParams = @{
-        Connection     = $connection
-        Transaction    = $transaction
-        CommandText    = $updateMealSql
-        ParameterTypes = $mealParameterTypes
-    }
-
-    $updateMealCommand = New-PreparedSQLiteCommand @updateMealCommandParams
-    $commands += $updateMealCommand
 
     $selectMealIdSql = @'
 SELECT MealId
@@ -316,24 +288,6 @@ WHERE NormalizedName = @NormalizedName;
     $selectIngredientIdCommand = New-PreparedSQLiteCommand @selectIngredientIdCommandParams
     $commands += $selectIngredientIdCommand
 
-    $deleteMealIngredientsSql = @'
-DELETE FROM MealIngredient
-WHERE MealId = @MealId;
-'@
-
-    $deleteMealIngredientsCommandParams = @{
-        Connection  = $connection
-        Transaction = $transaction
-        CommandText = $deleteMealIngredientsSql
-        ParameterTypes = @{
-            MealId = [System.Data.DbType]::Int64
-        }
-    }
-
-    $deleteMealIngredientsCommand =
-        New-PreparedSQLiteCommand @deleteMealIngredientsCommandParams
-
-    $commands += $deleteMealIngredientsCommand
 
     $insertMealIngredientSql = @'
 INSERT INTO MealIngredient (
@@ -372,7 +326,7 @@ VALUES (
             [string]::IsNullOrWhiteSpace($meal.ExternalMealId) -or
             [string]::IsNullOrWhiteSpace($meal.Name)
         ) {
-            Write-Warning "Skipping a meal without an ID or name."
+            Write-Warning 'Skipping a meal without an external ID or name.'
             continue
         }
 
@@ -384,35 +338,21 @@ VALUES (
             Area           = $meal.Area
             Country        = $meal.Country
             Instructions   = $meal.Instructions
-            ThumbnailUrl   = $meal.ThumbnailUrl
             YoutubeUrl     = $meal.YoutubeUrl
             SourceUrl      = $meal.SourceUrl
         }
 
-        $setInsertMealValuesParams = @{
-            Command = $insertMealCommand
-            Values  = $mealValues
-        }
+        Set-SQLiteCommandValues `
+            -Command $insertMealCommand `
+            -Values $mealValues
 
-        Set-SQLiteCommandValues @setInsertMealValuesParams
         [void]$insertMealCommand.ExecuteNonQuery()
 
-        $setUpdateMealValuesParams = @{
-            Command = $updateMealCommand
-            Values  = $mealValues
-        }
-
-        Set-SQLiteCommandValues @setUpdateMealValuesParams
-        [void]$updateMealCommand.ExecuteNonQuery()
-
-        $setSelectMealIdValuesParams = @{
-            Command = $selectMealIdCommand
-            Values = @{
+        Set-SQLiteCommandValues `
+            -Command $selectMealIdCommand `
+            -Values @{
                 ExternalMealId = $meal.ExternalMealId
             }
-        }
-
-        Set-SQLiteCommandValues @setSelectMealIdValuesParams
 
         $mealId = $selectMealIdCommand.ExecuteScalar()
 
@@ -420,36 +360,21 @@ VALUES (
             throw "Could not obtain the database ID for meal '$($meal.Name)'."
         }
 
-        $setDeleteMealIngredientsValuesParams = @{
-            Command = $deleteMealIngredientsCommand
-            Values = @{
-                MealId = [long]$mealId
-            }
-        }
-
-        Set-SQLiteCommandValues @setDeleteMealIngredientsValuesParams
-        [void]$deleteMealIngredientsCommand.ExecuteNonQuery()
-
         foreach ($ingredient in $meal.Ingredients) {
-            $setInsertIngredientValuesParams = @{
-                Command = $insertIngredientCommand
-                Values = @{
+            Set-SQLiteCommandValues `
+                -Command $insertIngredientCommand `
+                -Values @{
                     Name           = $ingredient.Name
                     NormalizedName = $ingredient.NormalizedName
                 }
-            }
 
-            Set-SQLiteCommandValues @setInsertIngredientValuesParams
             [void]$insertIngredientCommand.ExecuteNonQuery()
 
-            $setSelectIngredientIdValuesParams = @{
-                Command = $selectIngredientIdCommand
-                Values = @{
+            Set-SQLiteCommandValues `
+                -Command $selectIngredientIdCommand `
+                -Values @{
                     NormalizedName = $ingredient.NormalizedName
                 }
-            }
-
-            Set-SQLiteCommandValues @setSelectIngredientIdValuesParams
 
             $ingredientId = $selectIngredientIdCommand.ExecuteScalar()
 
@@ -457,17 +382,15 @@ VALUES (
                 throw "Could not obtain the ID for ingredient '$($ingredient.Name)'."
             }
 
-            $setInsertMealIngredientValuesParams = @{
-                Command = $insertMealIngredientCommand
-                Values = @{
+            Set-SQLiteCommandValues `
+                -Command $insertMealIngredientCommand `
+                -Values @{
                     MealId       = [long]$mealId
                     IngredientId = [long]$ingredientId
                     Position     = [int]$ingredient.Position
                     MeasureText  = $ingredient.MeasureText
                 }
-            }
 
-            Set-SQLiteCommandValues @setInsertMealIngredientValuesParams
             [void]$insertMealIngredientCommand.ExecuteNonQuery()
         }
     }
@@ -484,7 +407,7 @@ SELECT
     $summaryQueryParams = @{
         SQLiteConnection = $connection
         Query            = $summarySql
-        ErrorAction      = "Stop"
+        ErrorAction      = 'Stop'
     }
 
     $summary = Invoke-SqliteQuery @summaryQueryParams

@@ -49,25 +49,76 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 	app.render(w, r, http.StatusOK, "home.tmpl.html", templateData)
 }
 
-// TODO: display meal in a form
 type mealForm struct {
-	Meal                data.Meal `json:"meal"`
+	Name          string                `form:"name"`
+	AlternateName string                `form:"alternate_name"`
+	Category      string                `form:"category"`
+	Area          string                `form:"area"`
+	Country       string                `form:"country"`
+	Instructions  string                `form:"instructions"`
+	YoutubeURL    string                `form:"youtube_url"`
+	SourceURL     string                `form:"source_url"`
+	Ingredients   []data.MealIngredient `form:"ingredients"`
+
 	validator.Validator `form:"-"`
 }
 
+func (f mealForm) Meal() data.Meal {
+	ingredients := make([]data.MealIngredient, len(f.Ingredients))
+
+	for i, ingredient := range f.Ingredients {
+		ingredient.Position = int64(i + 1)
+		ingredients[i] = ingredient
+	}
+
+	return data.Meal{
+		Name:          f.Name,
+		AlternateName: f.AlternateName,
+		Category:      f.Category,
+		Area:          f.Area,
+		Country:       f.Country,
+		Instructions:  f.Instructions,
+		YoutubeURL:    f.YoutubeURL,
+		SourceURL:     f.SourceURL,
+		Ingredients:   ingredients,
+	}
+}
+
 func (app *application) mealCreate(w http.ResponseWriter, r *http.Request) {
-	// TODO: parse mealForm
+	form := mealForm{}
+
+	templateData := app.newTemplateData(r)
+	templateData.Form = form
+
+	app.render(w, r, http.StatusOK, "create.tmpl.html", templateData)
 }
 
 func (app *application) mealCreatePost(w http.ResponseWriter, r *http.Request) {
-	// TODO: send creation request
-	id, err := app.models.Meals.CreateMeal(data.Meal{})
+	var form mealForm
+
+	if err := app.decodePostForm(r, &form); err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	meal := form.Meal()
+
+	data.ValidateMeal(&form.Validator, meal)
+	if !form.Valid() {
+		templateData := app.newTemplateData(r)
+		templateData.Form = form
+
+		app.render(w, r, http.StatusUnprocessableEntity, "create.tmpl.html", templateData)
+		return
+	}
+
+	id, err := app.models.Meals.CreateMeal(meal)
 	if err != nil {
 		app.serverError(w, r, err)
 		return
 	}
 
-	fmt.Fprintf(w, "%d", id)
+	http.Redirect(w, r, fmt.Sprintf("/meal/view/%d", id), http.StatusSeeOther)
 }
 
 func (app *application) mealView(w http.ResponseWriter, r *http.Request) {

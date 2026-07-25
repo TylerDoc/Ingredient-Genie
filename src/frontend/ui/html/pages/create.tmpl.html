@@ -1,31 +1,191 @@
 {{define "title"}}Create a New Meal{{end}}
 
+{{define "scripts"}}
+<script src="/static/js/meal.js" defer></script>
+{{end}}
+
 {{define "main"}}
-<form action='/meal/create' method='POST' enctype='multipart/form-data' id='create_meal_form'>
-    <input type='hidden' name='csrf_token' value='{{.CSRFToken}}'>
-    <div>
-        <label>Title:</label>
-        {{with .Form.FieldErrors.title}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <input type='text' name='title' value='{{.Form.Title}}' required>
-    </div>
-    <div>
-        <label>Artist:</label>
-        {{with .Form.FieldErrors.artist}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <input type='text' name='artist' value='{{.Form.Artist}}' required>
-    </div>
-    <div>
-        <label>Image File:</label>
-        {{with .Form.FieldErrors.image}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <input type="file" name="image_file" id="image_file" required>
-    </div>
-    <div>
-        <input type='submit' value='Publish recipe'>
-    </div>
-</form>
+<section class="meal-create">
+    <header>
+        <h1>Create a New Meal</h1>
+        <p>Add a new meal and its ingredients.</p>
+    </header>
+
+    <form action="/meal/create" method="POST" id="create-meal-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+        <fieldset>
+            <legend>Meal Details</legend>
+
+            <div>
+                <label for="name">Name</label>
+                {{with .Form.FieldErrors.name}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="text"
+                    id="name"
+                    name="name"
+                    value="{{.Form.Name}}"
+                    required>
+            </div>
+
+            <div>
+                <label for="alternate-name">Alternate Name</label>
+                {{with .Form.FieldErrors.alternateName}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="text"
+                    id="alternate-name"
+                    name="alternate_name"
+                    value="{{.Form.AlternateName}}">
+            </div>
+
+            <div>
+                <label for="category">Category</label>
+                {{with .Form.FieldErrors.category}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="text"
+                    id="category"
+                    name="category"
+                    value="{{.Form.Category}}">
+            </div>
+
+            <div>
+                <label for="area">Area</label>
+                {{with .Form.FieldErrors.area}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="text"
+                    id="area"
+                    name="area"
+                    value="{{.Form.Area}}">
+            </div>
+
+            <div>
+                <label for="country">Country</label>
+                {{with .Form.FieldErrors.country}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="text"
+                    id="country"
+                    name="country"
+                    value="{{.Form.Country}}">
+            </div>
+
+            <fieldset>
+                <legend>Ingredients</legend>
+
+                {{with .Form.FieldErrors.ingredients}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+
+                <div id="create-ingredient-inputs">
+                    {{range $i, $ingredient := .Form.Ingredients}}
+                        <div class="create-ingredient-row">
+                            <div>
+                                <label>Ingredient</label>
+                                <input
+                                    type="text"
+                                    name="ingredients[{{$i}}].Name"
+                                    value="{{$ingredient.Name}}"
+                                    placeholder="e.g. Garlic"
+                                    required>
+                            </div>
+
+                            <div>
+                                <label>Measure</label>
+                                <input
+                                    type="text"
+                                    name="ingredients[{{$i}}].MeasureText"
+                                    value="{{$ingredient.MeasureText}}"
+                                    placeholder="e.g. 2 cloves">
+                            </div>
+
+                            <button type="button" class="remove-create-ingredient">
+                                Remove
+                            </button>
+                        </div>
+                    {{else}}
+                        <div class="create-ingredient-row">
+                            <div>
+                                <label>Ingredient</label>
+                                <input
+                                    type="text"
+                                    name="ingredients[0].Name"
+                                    placeholder="e.g. Garlic"
+                                    required>
+                            </div>
+
+                            <div>
+                                <label>Measure</label>
+                                <input
+                                    type="text"
+                                    name="ingredients[0].MeasureText"
+                                    placeholder="e.g. 2 cloves">
+                            </div>
+
+                            <button type="button" class="remove-create-ingredient">
+                                Remove
+                            </button>
+                        </div>
+                    {{end}}
+                </div>
+
+                <button type="button" id="add-create-ingredient">
+                    + Add Ingredient
+                </button>
+            </fieldset>
+
+            <div>
+                <label for="instructions">Instructions</label>
+
+                {{with .Form.FieldErrors.instructions}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+
+                <textarea
+                    id="instructions"
+                    name="instructions"
+                    required>{{.Form.Instructions}}</textarea>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Links</legend>
+
+            <div>
+                <label for="youtube-url">YouTube URL</label>
+                {{with .Form.FieldErrors.youtubeUrl}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="url"
+                    id="youtube-url"
+                    name="youtube_url"
+                    value="{{.Form.YoutubeURL}}">
+            </div>
+
+            <div>
+                <label for="source-url">Source URL</label>
+                {{with .Form.FieldErrors.sourceUrl}}
+                    <div class="error">{{.}}</div>
+                {{end}}
+                <input
+                    type="url"
+                    id="source-url"
+                    name="source_url"
+                    value="{{.Form.SourceURL}}">
+            </div>
+        </fieldset>
+
+        <div>
+            <input type="submit" value="Create Meal">
+        </div>
+    </form>
 {{end}}

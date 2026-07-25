@@ -3,7 +3,6 @@ package validator
 import (
 	"regexp"
 	"slices"
-	"strings"
 )
 
 type Validator struct {
@@ -45,15 +44,4 @@ func Unique[T comparable](values []T) bool {
 	}
 
 	return len(uniq) == len(values)
-}
-
-func ValidateIngredientSearch(v *Validator, ingredients []string) {
-	v.Check(len(ingredients) > 0, "ingredients", "must contain at least one ingredient")
-	v.Check(len(ingredients) <= 20, "ingredients", "must contain no more than 20 ingredients")
-
-	for _, ingredient := range ingredients {
-		ingredient = strings.TrimSpace(ingredient)
-		v.Check(ingredient != "", "ingredients", "must not contain empty values")
-		v.Check(len(ingredient) <= 100, "ingredients", "must not contain values longer than 100 characters")
-	}
 }

@@ -23,18 +23,21 @@ func (app *application) healthcheckHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (app *application) createMealHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO
 	var meal data.Meal
+
 	if err := app.readJSON(w, r, &meal); err != nil {
 		app.badRequestResponse(w, r, err)
 		return
 	}
 
 	v := validator.New()
-	// validate meal
-	_ = v
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if data.ValidateMeal(v, meal); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	id, err := app.models.Meals.Create(ctx, meal)
@@ -43,7 +46,12 @@ func (app *application) createMealHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	app.writeJSON(w, http.StatusOK, envelope{"id": id}, nil)
+	headers := make(http.Header)
+	headers.Set("Location", fmt.Sprintf("/v1/meals/%d", id))
+
+	if err := app.writeJSON(w, http.StatusCreated, envelope{"id": id}, headers); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
 }
 
 func (app *application) getMealHandler(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +188,7 @@ func (app *application) searchMealByIngredientsHandler(w http.ResponseWriter, r 
 
 	v := validator.New()
 
-	if validator.ValidateIngredientSearch(v, input.Ingredients); !v.Valid() {
+	if data.ValidateIngredientSearch(v, input.Ingredients); !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}

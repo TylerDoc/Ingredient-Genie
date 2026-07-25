@@ -1,172 +1,177 @@
-# Ingredient-Genie
-Ingredient Genie is a web application that helps users discover recipes based on the ingredients they already have at home. Users enter the ingredients currently available and the application generates recipes that use those ingredients. The goal is to reduce food waste, save money on groceries, and make meal planning faster and more convenient.
+# Ingredient Genie
 
-# Project Overview
+Ingredient Genie is a web application for finding meals based on ingredients users already have available.
 
-Ingredient-Genie will be a browser-based web application consisting of a Python backend API and a frontend built with HTML, CSS, and JavaScript.
+The application helps reduce food waste, avoid unnecessary grocery purchases, and simplify meal planning.
 
-The application will have a JSON REST API backend that accepts an arbitrary length list of ingredients from the user, processes the request, and returns recipes that best match the available ingredients.
+## Overview
 
-The project follows a client-server architecture where the frontend communicates with the backend through REST API endpoints. A front end will be developed however the REST API will be directly accessible.
+Ingredient Genie uses a client-server architecture with two standalone Go applications:
 
-# Functional Requirements
+* Go web frontend
+* Go JSON REST API backend
+* SQLite database
+* HTML templates, CSS, and JavaScript
 
-## User Input
+The frontend communicates with the backend through HTTP and JSON. The backend API can also be accessed independently.
 
-The front end application shall allow users to:
+```text
+Browser <-> Go Frontend <-> JSON REST API <-> Go Backend <-> SQLite
+```
 
-* Enter a variable length list of ingredients.
-    * we must agree here in the spec on things like if a null list returns all recipes, etc..
-* Edit ingredient list.
-* Submit ingredients to the backend.
-* Consume backend JSON responses.
+The project contains separate Go modules for the frontend and backend:
 
-## Recipe Search
+```text
+src/
+├── backend/
+└── frontend/
+```
 
-The backend shall:
+## Features
 
-* Accept ingredient lists through a REST API.
-* Search a recipe database or recipe dataset.
-* Return recipes containing those ingredients as a JSON response.
-* Rank recipes by the number of matching ingredients.
+Ingredient Genie supports:
 
-## Recipe Display
+* Searching meals using a variable-length ingredient list
+* Ranking results based on matching ingredients
+* Displaying matching and missing ingredients
+* Sorting and pagination
+* Creating meals
+* Viewing meals
+* Updating meals
+* Deleting meals
+* Dynamic ingredient fields using JavaScript
+* Input validation and error handling
+* Backend health checks
+* Responsive browser UI
 
-The frontend must display:
+## Data
 
-* Recipe name
-* Ingredient list
-* Cooking instructions
-* How many and which ingredients the recipe uses
+Meal information is stored in SQLite using three primary tables:
 
-## Error Handling
+* `Meal`
+* `Ingredient`
+* `MealIngredient`
 
-The frontend and backend must:
+Ingredients are stored separately and shared between meals. `MealIngredient` stores the relationship between a meal and its ingredients, including measurement and ingredient position.
 
-* Validate input.
-* Handle internal errors and return valid HTTP status codes.
+## Backend API
 
-# Technical Requirements
+The backend provides JSON endpoints for:
 
-## Frontend
+* Health checks
+* Meal creation
+* Meal retrieval
+* Meal updates
+* Meal deletion
+* Meal listing
+* Ingredient-based searches
+* Available search sort options
 
-Technologies:
-
-* HTML
-* CSS
-* JavaScript
-
-Responsibilities:
-
-* User interface
-* Ingredient entry
-* API communication
-* Display recipe results
-
-## Backend
-
-Technologies:
-
-* Python
-* Flask???
-* REST API
-
-Responsibilities:
-
-* API endpoints
-* Recipe search logic
-* Input validation
-* JSON responses
-
-## Data Format
-
-Frontend sends:
+Example search request:
 
 ```json
 {
   "ingredients": [
+    "garlic",
     "chicken",
-    "rice",
-    "broccoli"
-  ]
+    "rice"
+  ],
+  "page": 1,
+  "pageSize": 10,
+  "sort": "-ratio"
 }
 ```
 
-Backend returns:
-
-```json
-[
-  {
-    "title": "Chicken Fried Rice",
-    "ingredients": [
-      "Chicken",
-      "Rice",
-      "Broccoli",
-      "Soy Sauce"
-    ],
-    "instructions": "...",
-    "missingIngredients": [
-      "Soy Sauce"
-    ]
-  }
-]
-```
-
-# Project Work Breakdown
-
-### API Development
-
-Responsibilities
-
-* Design REST API
-* Create endpoints
-* Request validation
-* JSON responses
-* API testing
-* Documentation
-* Recipe dataset management
-* Ingredient matching algorithm
-* Search optimization
-* Data processing
-* Backend testing
+The API validates requests and returns appropriate JSON responses and HTTP status codes.
 
 ## Frontend
 
-### User Interface
+The frontend uses Go HTML templates for server-side rendering.
 
-Responsibilities
+JavaScript is used for lightweight client-side behavior such as:
 
-* Page layout
-* Ingredient input interface
-* Search button
-* Results display
-* Responsive styling
-* API integration
-* User experience improvements
+* Adding ingredient fields
+* Removing ingredient fields
+* Reindexing ingredient fields
+* Confirming meal deletion
 
-# Development Workflow
+The same meal form is used for both creating new meals and viewing or updating existing meals.
 
-Our primary means for version control will be git with this github repository.
-Main is the primary working branch.
+## Running the Project
 
-Each developer will clone this repository, work via feature branches, push changes to their feature branch to Github, for merge within Github. Developers will communicate once their changes are merged into Main so that other developers may pull changes into their local repo. 
+Run the backend:
 
-### To create a feature branch for development
+```bash
+cd src/backend
+go run ./cmd/api
+```
 
-`git clone git@github.com:TylerDoc/Ingredient-Genie.git ; cd Ingredient-Genie` -- run only once
-`git checkout -b "my-feature-branch"`
-    ... make your changes ...
-`git add .`
-`git commit -m "mildly descriptive comment"`
-`git push -u origin my-feature-branch`
-    ... open a pull request in the github UI so that we are able to track significant changes ...
+Run the frontend:
 
-### Pull changes that were pulled into the main branch
+```bash
+cd src/frontend
+go run ./cmd/web
+```
 
-    ... you are currently on your working branch
-    make sure to git add/commit/push or stash the local changes for your branch ...
-`git checkout main`
-`git pull origin main`
-`git checkout my-feature-branch`
-`git rebase main` -- resolve any conflicts
+The frontend must be configured with the address of the backend API.
 
+## Development Workflow
+
+Development uses Git and GitHub feature branches.
+
+```bash
+git clone git@github.com:TylerDoc/Ingredient-Genie.git
+cd Ingredient-Genie
+
+git checkout -b my-feature-branch
+
+git add .
+git commit -m "Add feature"
+git push -u origin my-feature-branch
+```
+
+Changes are merged into `main` through GitHub pull requests.
+
+To update a feature branch:
+
+```bash
+git checkout main
+git pull origin main
+
+git checkout my-feature-branch
+git rebase main
+```
+
+## CI/CD and Releases
+
+GitHub Actions and GoReleaser are used to build and publish releases.
+
+GoReleaser builds both Go applications:
+
+* `ingredient-genie-frontend`
+* `ingredient-genie-backend`
+
+Release binaries are built for:
+
+* Linux - AMD64 & ARM64
+* Windows - AMD64 & ARM64
+* macOS - AMD64 & ARM64
+
+The release workflow is:
+
+```text
+Git Tag -> GitHub Actions -> GoReleaser -> GitHub Release
+```
+
+This provides repeatable builds of both applications and publishes the compiled binaries through GitHub Releases.
+
+## Go References
+
+The project was written with an emphasis on conventional and idiomatic Go.
+
+Alex Edwards' books were used as development references:
+
+* *Let's Go*
+* *Let's Go Further*
+
+They were used for guidance on topics including routing, middleware, templates, validation, database access, HTTP clients, JSON APIs, and general Go web application structure.

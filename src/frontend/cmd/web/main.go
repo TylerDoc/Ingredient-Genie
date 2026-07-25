@@ -28,10 +28,10 @@ type application struct {
 func main() {
 	var cfg config
 
-	flag.IntVar(&cfg.port, "port", 4270, "API server port")
+	flag.IntVar(&cfg.port, "port", 4243, "API server port")
 	flag.StringVar(&cfg.logLevel, "log-level", "error", "Logging level (trace|debug|info|warning|error)")
 
-	flag.StringVar(&cfg.mealsApiUri, "meals-api-uri", "http://localhost:4269", "URI of the meals API to target")
+	flag.StringVar(&cfg.mealsApiUri, "meals-api-uri", "http://localhost:4242", "URI of the meals API to target")
 
 	flag.Parse()
 

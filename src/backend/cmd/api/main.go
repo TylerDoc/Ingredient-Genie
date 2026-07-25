@@ -35,7 +35,7 @@ type application struct {
 func main() {
 	var cfg config
 
-	flag.IntVar(&cfg.port, "port", 4269, "API server port")
+	flag.IntVar(&cfg.port, "port", 4242, "API server port")
 	flag.StringVar(&cfg.logLevel, "log-level", "error", "Logging level (trace|debug|info|warning|error)")
 
 	flag.StringVar(&cfg.db.path, "db-path", "meals.sqlite", "relative path to sqlite db")

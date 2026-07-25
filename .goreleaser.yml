@@ -44,6 +44,9 @@ archives:
       - goos: windows
         formats:
           - zip
+    files:
+      - src: src/frontend/README.md
+        dst: README.md
 
   - id: backend
     ids:
@@ -55,6 +58,9 @@ archives:
       - goos: windows
         formats:
           - zip
+    files:
+      - src: src/backend/README.md
+        dst: README.md
 
 checksum:
   name_template: checksums.txt

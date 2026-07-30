@@ -1,0 +1,23 @@
+{
+        email {{ email }}
+}
+
+{{ site_url }} {
+        log {
+                output file /var/log/caddy/access.log {
+                        roll_size 10MB
+                        roll_keep 3
+                        roll_keep_for 168h
+                }
+        }
+
+        @blocked {
+                path /metrics* /wp-admin* /wordpress*
+        }
+        respond @blocked "Not Found" 404
+
+        reverse_proxy localhost:{{ frontend_port }} {
+                stream_timeout 1h
+                stream_close_delay 5m
+        }
+}

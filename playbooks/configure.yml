@@ -1,0 +1,149 @@
+---
+- name: Configure Ingredient Genie server
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  vars:
+    timezone: America/New_York
+    locale: en_US.UTF-8
+    service_user: ingredient-genie
+    service_group: ingredient-genie
+
+  tasks:
+    - name: Show current target hosts for this play
+      debug:
+        msg: "Current host is {{ inventory_hostname }} and group 'webservers' contains: {{ groups['webservers'] }}"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Set system timezone
+      community.general.timezone:
+        name: "{{ timezone }}"
+
+    - name: Uncomment en_US.UTF-8 in /etc/locale.gen
+      lineinfile:
+        path: /etc/locale.gen
+        regexp: '^#(en_US\.UTF-8 UTF-8)'
+        line: 'en_US.UTF-8 UTF-8'
+        state: present
+
+    - name: Generate locales
+      command: locale-gen
+
+    - name: Create service user with a home directory, bash shell, and add to sudo group
+      user:
+        name: "{{ service_user }}"
+        shell: /bin/bash
+        groups: sudo
+        create_home: yes
+
+    - name: Remove password for the user
+      command: passwd --delete {{ service_user }}
+
+    - name: Force password change on next login
+      command: chage --lastday 0 {{ service_user }}
+
+    - name: Copy root .ssh directory to the user's home if not already present
+      ansible.builtin.copy:
+        src: /root/.ssh
+        dest: "/home/{{ service_user }}"
+        remote_src: yes
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+
+    - name: Ensure fail2ban is installed
+      apt:
+        name: fail2ban
+        state: present
+
+    - name: Copy jail.conf to jail.local for persistence
+      ansible.builtin.copy:
+        src: /etc/fail2ban/jail.conf
+        dest: /etc/fail2ban/jail.local
+        remote_src: yes
+
+    - name: Uncomment fail2ban ignoreip for localhost
+      lineinfile:
+        path: /etc/fail2ban/jail.local
+        regexp: '^#(ignoreip = 127.0.0.1/8 ::1)'
+        line: "ignoreip = 127.0.0.1/8 ::1"
+        state: present
+
+    - name: Copy paths-debian.conf to paths-debian.local for persistence
+      ansible.builtin.copy:
+        src: /etc/fail2ban/paths-debian.conf
+        dest: /etc/fail2ban/paths-debian.local
+        remote_src: yes
+
+    - name: Ensure fail2ban recognizes systemd for sshd
+      lineinfile:
+        path: /etc/fail2ban/paths-debian.local
+        line: "sshd_backend = systemd"
+        state: present
+
+    - name: Ensure UFW is installed
+      apt:
+        name: ufw
+        state: present
+
+    - name: Set default incoming policy to deny
+      community.general.ufw:
+        direction: incoming
+        default: deny
+
+    - name: Set default outgoing policy to allow
+      community.general.ufw:
+        direction: outgoing
+        default: allow
+
+    - name: Allow SSH (port 22/ssh)
+      community.general.ufw:
+        rule: allow
+        port: 22
+
+    - name: Ensure SSH to approved users
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?AllowUsers\s+'
+        line: "AllowUsers info324group {{ service_user }}"
+        state: present
+
+    - name: Disable root login in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: "PermitRootLogin no"
+
+    - name: Disable password authentication in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PasswordAuthentication'
+        line: "PasswordAuthentication no"
+
+    - name: Allow HTTP (port 80/tcp)
+      community.general.ufw:
+        rule: allow
+        port: 80
+        proto: tcp
+
+    - name: Allow HTTPS (port 443/tcp)
+      community.general.ufw:
+        rule: allow
+        port: 443
+        proto: tcp
+
+    - name: Enable UFW firewall
+      community.general.ufw:
+        state: enabled
+
+    - name: Upgrade packages while forcing new configuration files
+      ansible.builtin.apt:
+        upgrade: yes
+        dpkg_options: "force-confnew"
+
+    - name: Unconditionally reboot the machine with all defaults
+      ansible.builtin.reboot:
+        reboot_timeout: 300

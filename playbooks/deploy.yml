@@ -1,0 +1,276 @@
+---
+- name: Deploy Ingredient Genie
+  hosts: webservers
+  gather_facts: false
+  become: true
+
+  vars:
+    service_user: ingredient-genie
+    service_group: ingredient-genie
+
+    frontend_binary: ingredient-genie-frontend
+    frontend_port: 4243
+
+    backend_binary: ingredient-genie-backend
+    backend_port: 4242
+
+    site_url: ingredient-genie.com
+    email: mag574@drexel.edu
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Restart Ingredient Genie backend
+      ansible.builtin.systemd_service:
+        name: ingredient-genie-backend
+        enabled: true
+        state: restarted
+
+    - name: Restart Ingredient Genie frontend
+      ansible.builtin.systemd_service:
+        name: ingredient-genie-frontend
+        enabled: true
+        state: restarted
+
+    - name: Validate Caddy configuration
+      ansible.builtin.command:
+        cmd: caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      changed_when: false
+
+    - name: Reload Caddy
+      ansible.builtin.systemd_service:
+        name: caddy
+        enabled: true
+        state: reloaded
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - debian-keyring
+          - debian-archive-keyring
+          - apt-transport-https
+          - curl
+          - libnss3-tools
+        state: present
+        update_cache: true
+
+    - name: Add the Caddy GPG key
+      ansible.builtin.apt_key:
+        url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+        keyring: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        state: present
+
+    - name: Add the Caddy repository
+      ansible.builtin.apt_repository:
+        filename: caddy-stable
+        repo: >-
+          deb
+          [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg]
+          https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+          any-version main
+        state: present
+        update_cache: true
+
+    # Something isn't quite right with the Caddy install, re-running usually works
+    # if it's not working run this on the host till I fix it:
+    # sudo install -d --owner=caddy --group=caddy --mode=0750 /var/log/caddy
+    # sudo touch /var/log/caddy/access.log
+    # sudo chown caddy:caddy /var/log/caddy/access.log
+    # sudo chmod 0640 /var/log/caddy/access.log
+    # I think it might be trying to do these things before the caddy use exists.
+    # I run into this issue with Caddy all the time
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+
+    - name: Create Caddy log directory
+      ansible.builtin.file:
+        path: /var/log/caddy
+        state: directory
+        owner: caddy
+        group: caddy
+        mode: "0750"
+
+    - name: Create Caddy access log
+      ansible.builtin.file:
+        path: /var/log/caddy/access.log
+        state: touch
+        owner: caddy
+        group: caddy
+        mode: "0640"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Install Caddyfile
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        owner: root
+        group: caddy
+        mode: "0644"
+      notify:
+        - Validate Caddy configuration
+        - Reload Caddy
+
+    - name: Get the latest Ingredient Genie release
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/TylerDoc/Ingredient-Genie/releases/latest
+        method: GET
+        return_content: true
+        headers:
+          Accept: application/vnd.github+json
+      register: ingredient_genie_release_response
+
+    - name: Show available release assets
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ingredient_genie_release_response.json.assets
+            | default([])
+            | map(attribute='name')
+            | list
+          }}
+
+    - name: Find Linux AMD64 release assets
+      ansible.builtin.set_fact:
+        ingredient_genie_backend_assets: >-
+          {{
+            ingredient_genie_release_response.json.assets
+            | default([])
+            | selectattr(
+                'name',
+                'search',
+                '^ingredient-genie-backend_.*_linux_amd64[.]tar[.]gz$'
+              )
+            | list
+          }}
+        ingredient_genie_frontend_assets: >-
+          {{
+            ingredient_genie_release_response.json.assets
+            | default([])
+            | selectattr(
+                'name',
+                'search',
+                '^ingredient-genie-frontend_.*_linux_amd64[.]tar[.]gz$'
+              )
+            | list
+          }}
+
+    - name: Verify the release assets were found
+      ansible.builtin.assert:
+        that:
+          - ingredient_genie_backend_assets | length == 1
+          - ingredient_genie_frontend_assets | length == 1
+        fail_msg: >-
+          Expected one backend and one frontend Linux AMD64 archive.
+          Available assets:
+          {{
+            ingredient_genie_release_response.json.assets
+            | default([])
+            | map(attribute='name')
+            | list
+          }}
+
+    - name: Set selected release assets
+      ansible.builtin.set_fact:
+        ingredient_genie_backend_asset: "{{ ingredient_genie_backend_assets[0] }}"
+        ingredient_genie_frontend_asset: "{{ ingredient_genie_frontend_assets[0] }}"
+
+    - name: Create application directories
+      ansible.builtin.file:
+        path: "/home/{{ service_user }}/{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0750"
+      loop:
+        - backend
+        - frontend
+
+    - name: Download backend archive
+      ansible.builtin.get_url:
+        url: "{{ ingredient_genie_backend_asset.browser_download_url }}"
+        dest: "/tmp/{{ ingredient_genie_backend_asset.name }}"
+        mode: "0644"
+      register: backend_download
+
+    - name: Download frontend archive
+      ansible.builtin.get_url:
+        url: "{{ ingredient_genie_frontend_asset.browser_download_url }}"
+        dest: "/tmp/{{ ingredient_genie_frontend_asset.name }}"
+        mode: "0644"
+      register: frontend_download
+
+    - name: Extract backend archive
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ ingredient_genie_backend_asset.name }}"
+        dest: "/home/{{ service_user }}/backend"
+        remote_src: true
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+      notify: Restart Ingredient Genie backend
+
+    - name: Extract frontend archive
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ ingredient_genie_frontend_asset.name }}"
+        dest: "/home/{{ service_user }}/frontend"
+        remote_src: true
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+      notify: Restart Ingredient Genie frontend
+
+    - name: Install backend systemd unit
+      ansible.builtin.template:
+        src: ingredient-genie.service.j2
+        dest: /etc/systemd/system/ingredient-genie-backend.service
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        service_description: Ingredient Genie Backend
+        service_directory: backend
+        service_binary: "{{ backend_binary }}"
+        service_port: "{{ backend_port }}"
+      notify:
+        - Reload systemd
+        - Restart Ingredient Genie backend
+
+    - name: Install frontend systemd unit
+      ansible.builtin.template:
+        src: ingredient-genie.service.j2
+        dest: /etc/systemd/system/ingredient-genie-frontend.service
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        service_description: Ingredient Genie Frontend
+        service_directory: frontend
+        service_binary: "{{ frontend_binary }}"
+        service_port: "{{ frontend_port }}"
+      notify:
+        - Reload systemd
+        - Restart Ingredient Genie frontend
+
+    - name: Apply handlers before checking services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure Ingredient Genie services are enabled and running
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - ingredient-genie-backend
+        - ingredient-genie-frontend
+
+    - name: Remove downloaded archives
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/{{ ingredient_genie_backend_asset.name }}"
+        - "/tmp/{{ ingredient_genie_frontend_asset.name }}"

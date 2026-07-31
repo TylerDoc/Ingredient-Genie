@@ -14,7 +14,8 @@ func ValidateFilters(v *validator.Validator, f Filters) {
 	v.Check(f.Page > 0, "page", "must be greater than 0")
 	v.Check(f.Page <= 1_000, "page", "must be less than or equal to 1,000") // this may cause an unexpected issue if we surpass 1000 pages, unlikely..
 	v.Check(f.PageSize > 0, "pageSize", "must be greater than 0")
-	v.Check(f.PageSize <= 50, "pageSize", "must be less than or equal to 50")
+	// no max pageSize for now, project isn't large enough for this to be a DOS vector
+	// v.Check(f.PageSize <= 50, "pageSize", "must be less than or equal to 50")
 
 	_, validSort := MealSortStmts[f.Sort]
 	v.Check(validSort, "sort", "invalid sort value")

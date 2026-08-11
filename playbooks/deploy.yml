@@ -54,14 +54,30 @@
           - apt-transport-https
           - curl
           - libnss3-tools
+          - gnupg
         state: present
         update_cache: true
 
-    - name: Add the Caddy GPG key
-      ansible.builtin.apt_key:
+    # updated Caddy install for 13+ https://caddyserver.com/docs/install?utm_source=chatgpt.com#debian-ubuntu-raspbian
+    - name: Download Caddy GPG key
+      ansible.builtin.get_url:
         url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-        keyring: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        state: present
+        dest: /tmp/caddy-stable.gpg
+        mode: '0644'
+
+    - name: Convert Caddy GPG key
+      ansible.builtin.command:
+        cmd: >
+          gpg --dearmor
+          --yes
+          --output /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          /tmp/caddy-stable.gpg
+      changed_when: false
+
+    - name: Ensure Caddy GPG key is readable
+      ansible.builtin.file:
+        path: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        mode: '0644'
 
     - name: Add the Caddy repository
       ansible.builtin.apt_repository:

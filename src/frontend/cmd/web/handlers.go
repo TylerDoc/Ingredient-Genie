@@ -146,12 +146,12 @@ func (app *application) mealView(w http.ResponseWriter, r *http.Request) {
 
 	meal, err := app.models.Meals.GetMeal(id)
 	if err != nil {
-		if errors.Is(err, data.ErrNoMeal) {
+		switch {
+		case errors.Is(err, data.ErrNoMeal):
 			http.NotFound(w, r)
-			return
+		default:
+			app.serverError(w, r, err)
 		}
-
-		app.serverError(w, r, err)
 		return
 	}
 

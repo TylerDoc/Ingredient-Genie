@@ -78,7 +78,12 @@ func (app *application) getMealHandler(w http.ResponseWriter, r *http.Request) {
 
 	meal, err := app.models.Meals.Get(ctx, input.ID)
 	if err != nil {
-		app.serverErrorResponse(w, r, err)
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 

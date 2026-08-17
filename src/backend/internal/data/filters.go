@@ -25,10 +25,23 @@ func ValidateFilters(v *validator.Validator, f Filters) {
 var MealSortStmts = map[string]string{
 	"id":     "MealId ASC",
 	"-id":    "MealId DESC",
-	"ratio":  "MatchRatio ASC, MealId ASC",
-	"-ratio": "MatchRatio DESC, MealId ASC",
 	"name":   "Name COLLATE NOCASE ASC, MealId ASC",
 	"-name":  "Name COLLATE NOCASE DESC, MealId ASC",
+	"ratio":  "MatchRatio ASC, MealId ASC",
+	"-ratio": "MatchRatio DESC, MealId ASC",
+}
+
+// This isn't ideal, I think enums could fix this duplication
+// but for now the sort options returned by the sort options endpoint
+// short itself be sorted, and I don't want to sort an array unecessarily
+// for each request.
+var MealSortOptions = []string{
+	"id",
+	"-id",
+	"name",
+	"-name",
+	"ratio",
+	"-ratio",
 }
 
 func (f Filters) orderBy() string {
